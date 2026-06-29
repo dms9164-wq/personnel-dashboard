@@ -6,6 +6,7 @@
   <title>Personnel Dashboard</title>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/xlsx/dist/xlsx.full.min.js"></script>
 
   <style>
@@ -46,7 +47,7 @@
     }
     .filters {
       display: grid;
-      grid-template-columns: repeat(8, 1fr);
+      grid-template-columns: repeat(7, 1fr);
       gap: 12px;
       background: white;
       padding: 18px;
@@ -166,7 +167,7 @@
 <main>
   <div class="notice">
     <b>수정 위치:</b> 코드 하단의 <b>SPREADSHEET_ID</b>와 <b>SHEET_NAME</b>만 확인하세요.
-    현재는 사용자가 공유한 스프레드시트와 <b>통합</b> 시트 기준으로 세팅되어 있습니다.
+    현재는 사용자가 공유한 스프레드시트와 <b>통합</b> 시트 기준으로 세팅되어 있습니다. 도급 업체별 표는 통합 시트에 <b>업체</b> 또는 <b>업체명</b> 컬럼이 있을 때 표시됩니다.
   </div>
 
   <div id="errorBox" class="error"></div>
@@ -179,10 +180,6 @@
     <div>
       <label>종료일</label>
       <input type="date" id="endDate">
-    </div>
-    <div>
-      <label>부서</label>
-      <select id="departmentFilter"><option value="전체">전체</option></select>
     </div>
     <div>
       <label>고용구분</label>
@@ -276,16 +273,28 @@
       <canvas id="periodTrendChart"></canvas>
     </div>
     <div class="box">
-      <h2>직접직 기준 정규직 VS 도급직</h2>
-      <p class="desc">직무구분이 직접직인 데이터만 대상으로 비교합니다.</p>
-      <canvas id="directCompareChart"></canvas>
+      <h2>도급직 업체별 인원</h2>
+      <p class="desc">선택 기간 기준 도급직 인원을 업체별로 집계합니다.</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>업체</th>
+              <th>실제인원</th>
+              <th>계획인원</th>
+              <th>구성비</th>
+            </tr>
+          </thead>
+          <tbody id="contractCompanyTable"></tbody>
+        </table>
+      </div>
     </div>
   </section>
 
   <section class="grid-2">
     <div class="box">
-      <h2>최근 7일 급여형태별 인원 추이</h2>
-      <p class="desc">선택한 종료일 기준 최근 7일의 급여형태별 실제인원 추이입니다.</p>
+      <h2>최근 7일 급여형태별 누적 인원 추이</h2>
+      <p class="desc">도급직, 시급직, 연봉직, 월급직을 누적 막대로 표시하고 전체 인원 추이는 꺾은선으로 표시합니다.</p>
       <canvas id="sevenDayPayTypeChart"></canvas>
     </div>
     <div class="box">
@@ -295,33 +304,7 @@
     </div>
   </section>
 
-  <section class="grid-2">
-    <div class="box">
-      <h2>급여형태별 일평균 과부족</h2>
-      <p class="desc">선택 기간의 실제인원과 계획인원을 일자 기준으로 평균낸 뒤 차이를 계산합니다.</p>
-      <canvas id="payTypeGapChart"></canvas>
-    </div>
-    <div class="box">
-      <h2>과부족 계산 기준</h2>
-      <p class="desc">
-        기존 수치는 선택 기간 전체의 실제인원 합계에서 계획인원 합계를 뺀 값이어서, 조회 기간이 길어질수록 수치가 크게 보일 수 있었습니다.<br><br>
-        이번 버전은 급여형태별로 <b>일평균 실제인원 - 일평균 계획인원</b> 기준으로 표시합니다.
-      </p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>급여형태</th>
-              <th>일평균 실제</th>
-              <th>일평균 계획</th>
-              <th>일평균 과부족</th>
-            </tr>
-          </thead>
-          <tbody id="payTypeGapTable"></tbody>
-        </table>
-      </div>
-    </div>
-  </section>
+
 
   <section class="box">
     <h2>집계 상세</h2>
@@ -353,6 +336,10 @@
   const SPREADSHEET_ID = "1eYTZLpg1Xz7aV-1gszOgujnYmfgYuosaW2kTjMpRn7c";
   const SHEET_NAME = "통합";
 
+  if (window.ChartDataLabels) {
+    Chart.register(ChartDataLabels);
+  }
+
   let rawData = [];
   let filteredData = [];
   let chartInstances = {};
@@ -367,7 +354,7 @@
   });
 
   function initializeFilterEvents() {
-    ["startDate", "endDate", "departmentFilter", "employmentFilter", "jobFilter", "payTypeFilter", "periodType"]
+    ["startDate", "endDate", "employmentFilter", "jobFilter", "payTypeFilter", "periodType"]
       .forEach(id => document.getElementById(id).addEventListener("change", renderDashboard));
   }
 
@@ -439,6 +426,7 @@
       employmentType: toText(row["고용구분"]),
       jobType: toText(row["직무구분"]),
       payType: toText(row["급여형태"]),
+      company: toText(row["업체"] || row["업체명"] || row["협력사"] || row["도급업체"]),
       actual: toNumber(row["실제인원"]),
       plan: toNumber(row["계획인원"])
     };
@@ -460,7 +448,6 @@
       if (startInput.value < dates[0]) startInput.value = dates[0];
     }
 
-    setSelectOptions("departmentFilter", uniqueValues(rawData, "department"));
     setSelectOptions("payTypeFilter", uniqueValues(rawData, "payType"));
   }
 
@@ -490,25 +477,29 @@
     renderFilterSummary();
     renderKpiCards();
     renderPeriodTrendChart();
-    renderDirectCompareChart();
+    renderContractCompanyTable();
     renderSevenDayPayTypeChart();
     renderPayTypePlanActualChart();
-    renderPayTypeGapChart();
     renderSummaryTable();
   }
 
   function getFilteredData() {
+    return getFilteredRows(false);
+  }
+
+  function getFilteredRows(includeCompanyRows) {
     const startDate = document.getElementById("startDate").value;
     const endDate = document.getElementById("endDate").value;
-    const department = document.getElementById("departmentFilter").value;
     const employmentType = document.getElementById("employmentFilter").value;
     const jobType = document.getElementById("jobFilter").value;
     const payType = document.getElementById("payTypeFilter").value;
 
     return rawData.filter(row => {
-      return row.date >= startDate &&
+      const companyRowCheck = includeCompanyRows ? true : !row.company;
+
+      return companyRowCheck &&
+             row.date >= startDate &&
              row.date <= endDate &&
-             (department === "전체" || row.department === department) &&
              (employmentType === "전체" || row.employmentType === employmentType) &&
              (jobType === "전체" || row.jobType === jobType) &&
              (payType === "전체" || row.payType === payType);
@@ -518,14 +509,13 @@
   function renderFilterSummary() {
     const startDate = document.getElementById("startDate").value;
     const endDate = document.getElementById("endDate").value;
-    const department = document.getElementById("departmentFilter").value;
     const employmentType = document.getElementById("employmentFilter").value;
     const jobType = document.getElementById("jobFilter").value;
     const payType = document.getElementById("payTypeFilter").value;
     const periodText = document.getElementById("periodType").selectedOptions[0].textContent;
 
     document.getElementById("filterSummary").textContent =
-      `조회기간 ${startDate} ~ ${endDate} / 부서 ${department} / 고용 ${employmentType} / 직무 ${jobType} / 급여형태 ${payType} / 집계 ${periodText} / ${filteredData.length.toLocaleString("ko-KR")}행`;
+      `조회기간 ${startDate} ~ ${endDate} / 생산2팀 / 고용 ${employmentType} / 직무 ${jobType} / 급여형태 ${payType} / 집계 ${periodText} / ${filteredData.length.toLocaleString("ko-KR")}행`;
   }
 
   function renderKpiCards() {
@@ -559,27 +549,93 @@
       data: {
         labels: grouped.map(row => row.period),
         datasets: [
-          { type: "bar", label: "실제인원", data: grouped.map(row => row.actual), yAxisID: "peopleAxis", borderWidth: 1 },
-          { type: "bar", label: "계획인원", data: grouped.map(row => row.plan), yAxisID: "peopleAxis", borderWidth: 1 },
-          { type: "line", label: "진행률(%)", data: grouped.map(row => row.progressRate), yAxisID: "rateAxis", tension: 0.3, borderWidth: 3, pointRadius: 4 }
+          { 
+            type: "bar", 
+            label: "실제인원", 
+            data: grouped.map(row => row.actual), 
+            yAxisID: "peopleAxis", 
+            borderWidth: 1,
+            datalabels: centerBarLabelOptions()
+          },
+          { 
+            type: "bar", 
+            label: "계획인원", 
+            data: grouped.map(row => row.plan), 
+            yAxisID: "peopleAxis", 
+            borderWidth: 1,
+            datalabels: centerBarLabelOptions()
+          },
+          { 
+            type: "line", 
+            label: "진행률(%)", 
+            data: grouped.map(row => row.progressRate), 
+            yAxisID: "rateAxis", 
+            tension: 0.3, 
+            borderWidth: 3, 
+            pointRadius: 4,
+            datalabels: { display: false }
+          }
         ]
       },
       options: comboChartOptions()
     });
   }
 
-  function renderDirectCompareChart() {
-    const directData = filteredData.filter(row => row.jobType === "직접직");
-    const grouped = groupByKey(directData, "employmentType");
-    const labels = Object.keys(grouped);
 
-    createChart("directCompareChart", {
-      type: "bar",
-      data: {
-        labels,
-        datasets: [{ label: "직접직 실제인원", data: labels.map(key => grouped[key].actual), borderWidth: 1 }]
-      },
-      options: basicBarOptions("인원")
+  function renderContractCompanyTable() {
+    const baseContractData = getFilteredRows(false).filter(row => row.employmentType === "도급직");
+    const companyContractData = getFilteredRows(true).filter(row => row.employmentType === "도급직" && row.company);
+
+    const totalActual = sum(baseContractData, "actual");
+    const totalPlan = sum(baseContractData, "plan");
+
+    const grouped = {};
+
+    companyContractData.forEach(row => {
+      const company = row.company;
+
+      if (!grouped[company]) {
+        grouped[company] = {
+          company,
+          actual: 0,
+          plan: 0
+        };
+      }
+
+      grouped[company].actual += row.actual;
+      grouped[company].plan += row.plan;
+    });
+
+    const result = Object.values(grouped).sort((a, b) => b.actual - a.actual);
+    const tbody = document.getElementById("contractCompanyTable");
+    tbody.innerHTML = "";
+
+    const totalTr = document.createElement("tr");
+    totalTr.innerHTML = `
+      <td><b>도급전체</b></td>
+      <td><b>${formatNumber(totalActual)}명</b></td>
+      <td><b>${formatNumber(totalPlan)}명</b></td>
+      <td><b>100.0%</b></td>
+    `;
+    tbody.appendChild(totalTr);
+
+    if (!result.length) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td colspan="4" style="text-align:center;">업체별 상세 데이터가 없습니다. 통합 시트에 업체 또는 업체명 컬럼을 추가한 뒤 업체별 행을 입력해주세요.</td>`;
+      tbody.appendChild(tr);
+      return;
+    }
+
+    result.forEach(row => {
+      const ratio = totalActual === 0 ? 0 : row.actual / totalActual * 100;
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${row.company}</td>
+        <td>${formatNumber(row.actual)}명</td>
+        <td>${formatNumber(row.plan)}명</td>
+        <td>${ratio.toFixed(1)}%</td>
+      `;
+      tbody.appendChild(tr);
     });
   }
 
@@ -588,34 +644,59 @@
     const startDate = addDays(endDate, -6);
     const dates = getDateRange(startDate, endDate);
 
-    const department = document.getElementById("departmentFilter").value;
     const employmentType = document.getElementById("employmentFilter").value;
     const jobType = document.getElementById("jobFilter").value;
     const payType = document.getElementById("payTypeFilter").value;
 
     const data = rawData.filter(row => {
-      return row.date >= startDate &&
+      return !row.company &&
+             row.date >= startDate &&
              row.date <= endDate &&
-             (department === "전체" || row.department === department) &&
              (employmentType === "전체" || row.employmentType === employmentType) &&
              (jobType === "전체" || row.jobType === jobType) &&
              (payType === "전체" || row.payType === payType);
     });
 
-    const payTypes = uniqueValues(data, "payType");
+    const preferredOrder = ["도급시급직", "도급직", "시급직", "연봉직", "월급직"];
+    const existingPayTypes = uniqueValues(data, "payType");
+    const payTypes = preferredOrder
+      .filter(type => existingPayTypes.includes(type))
+      .concat(existingPayTypes.filter(type => !preferredOrder.includes(type)));
 
     const datasets = payTypes.map(type => ({
-      type: "line",
+      type: "bar",
       label: type,
       data: dates.map(date => sum(data.filter(row => row.date === date && row.payType === type), "actual")),
+      stack: "payTypeStack",
+      borderWidth: 1,
+      datalabels: centerBarLabelOptions()
+    }));
+
+    const totalValues = dates.map(date => sum(data.filter(row => row.date === date), "actual"));
+
+    datasets.push({
+      type: "line",
+      label: "전체 인원",
+      data: totalValues,
+      yAxisID: "y",
       tension: 0.3,
       borderWidth: 3,
-      pointRadius: 4
-    }));
+      pointRadius: 4,
+      datalabels: {
+        display: true,
+        align: "top",
+        anchor: "end",
+        formatter: function(value) {
+          return formatNumber(value);
+        },
+        font: { size: 11, weight: "800" },
+        color: "#111827"
+      }
+    });
 
     createChart("sevenDayPayTypeChart", {
       data: { labels: dates, datasets },
-      options: lineChartOptions()
+      options: stackedBarLineOptions()
     });
   }
 
@@ -628,97 +709,21 @@
       data: {
         labels,
         datasets: [
-          { label: "실제인원", data: labels.map(key => grouped[key].actual), borderWidth: 1 },
-          { label: "계획인원", data: labels.map(key => grouped[key].plan), borderWidth: 1 }
+          { 
+            label: "실제인원", 
+            data: labels.map(key => grouped[key].actual), 
+            borderWidth: 1,
+            datalabels: centerBarLabelOptions()
+          },
+          { 
+            label: "계획인원", 
+            data: labels.map(key => grouped[key].plan), 
+            borderWidth: 1,
+            datalabels: centerBarLabelOptions()
+          }
         ]
       },
       options: basicBarOptions("인원")
-    });
-  }
-
-  function renderPayTypeGapChart() {
-    const dailyGrouped = {};
-    const payTypeDateMap = {};
-
-    filteredData.forEach(row => {
-      const payType = row.payType || "미지정";
-      const date = row.date;
-      const key = payType + "|" + date;
-
-      if (!dailyGrouped[key]) {
-        dailyGrouped[key] = {
-          payType,
-          date,
-          actual: 0,
-          plan: 0
-        };
-      }
-
-      dailyGrouped[key].actual += row.actual;
-      dailyGrouped[key].plan += row.plan;
-
-      if (!payTypeDateMap[payType]) {
-        payTypeDateMap[payType] = new Set();
-      }
-      payTypeDateMap[payType].add(date);
-    });
-
-    const payTypeTotals = {};
-
-    Object.values(dailyGrouped).forEach(row => {
-      if (!payTypeTotals[row.payType]) {
-        payTypeTotals[row.payType] = {
-          payType: row.payType,
-          actualTotal: 0,
-          planTotal: 0,
-          dayCount: 0
-        };
-      }
-
-      payTypeTotals[row.payType].actualTotal += row.actual;
-      payTypeTotals[row.payType].planTotal += row.plan;
-      payTypeTotals[row.payType].dayCount += 1;
-    });
-
-    const result = Object.values(payTypeTotals).map(row => {
-      const avgActual = row.dayCount === 0 ? 0 : row.actualTotal / row.dayCount;
-      const avgPlan = row.dayCount === 0 ? 0 : row.planTotal / row.dayCount;
-
-      return {
-        payType: row.payType,
-        avgActual,
-        avgPlan,
-        avgGap: avgActual - avgPlan
-      };
-    }).sort((a, b) => b.avgGap - a.avgGap);
-
-    createChart("payTypeGapChart", {
-      type: "bar",
-      data: {
-        labels: result.map(row => row.payType),
-        datasets: [{ label: "일평균 과부족", data: result.map(row => Number(row.avgGap.toFixed(1))), borderWidth: 1 }]
-      },
-      options: basicBarOptions("일평균 과부족")
-    });
-
-    renderPayTypeGapTable(result);
-  }
-
-  function renderPayTypeGapTable(result) {
-    const tbody = document.getElementById("payTypeGapTable");
-    if (!tbody) return;
-
-    tbody.innerHTML = "";
-
-    result.forEach(row => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td>${row.payType}</td>
-        <td>${row.avgActual.toFixed(1)}명</td>
-        <td>${row.avgPlan.toFixed(1)}명</td>
-        <td class="${valueClass(row.avgGap)}">${formatSignedNumber(row.avgGap.toFixed(1))}명</td>
-      `;
-      tbody.appendChild(tr);
     });
   }
 
@@ -756,6 +761,7 @@
       "고용구분": row.employmentType,
       "직무구분": row.jobType,
       "급여형태": row.payType,
+      "업체": row.company,
       "실제인원": row.actual,
       "계획인원": row.plan,
       "과부족": row.actual - row.plan,
@@ -789,7 +795,6 @@
       document.getElementById("startDate").value = dates[0];
     }
 
-    document.getElementById("departmentFilter").value = "전체";
     document.getElementById("employmentFilter").value = "전체";
     document.getElementById("jobFilter").value = "전체";
     document.getElementById("payTypeFilter").value = "전체";
@@ -927,6 +932,56 @@
   function createChart(canvasId, config) {
     if (chartInstances[canvasId]) chartInstances[canvasId].destroy();
     chartInstances[canvasId] = new Chart(document.getElementById(canvasId), config);
+  }
+
+
+
+  function centerBarLabelOptions() {
+    return {
+      display: function(context) {
+        return Number(context.dataset.data[context.dataIndex] || 0) > 0;
+      },
+      anchor: "center",
+      align: "center",
+      formatter: function(value) {
+        return value ? formatNumber(value) : "";
+      },
+      font: {
+        size: 11,
+        weight: "700",
+        family: "Segoe UI, Malgun Gothic, Arial, sans-serif"
+      },
+      color: "#4b5563",
+      clamp: true,
+      clip: false
+    };
+  }
+
+  function stackedBarLineOptions() {
+    return {
+      responsive: true,
+      interaction: { mode: "index", intersect: false },
+      plugins: {
+        legend: { position: "bottom" },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return context.dataset.label + ": " + formatNumber(context.raw) + "명";
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          stacked: true
+        },
+        y: {
+          stacked: true,
+          beginAtZero: true,
+          title: { display: true, text: "인원" }
+        }
+      }
+    };
   }
 
   function comboChartOptions() {
